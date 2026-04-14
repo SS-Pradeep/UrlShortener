@@ -15,7 +15,8 @@ import java.net.URISyntaxException;
 import com.jeyadevan.urlshortener.dto.FullUrl;
 import com.jeyadevan.urlshortener.dto.ShortUrl;
 import com.jeyadevan.urlshortener.services.urlService;
-
+import com.jeyadevan.urlshortener.services.cacheService;
+import com.jeyadevan.urlshortener.model.urlEntity;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 
@@ -23,10 +24,24 @@ import org.slf4j.Logger;
 public class urlController {
     Logger logger = LoggerFactory.getLogger(urlController.class);
     private final urlService urlService;
+    private final cacheService cacheService;
+    
+    private ResponseEntity<Void> createRedirectResponse(FullUrl fullUrl) {
+        try {
+            URI uri = new URI(fullUrl.getOriginalUrl());
+            HttpHeaders httpHeaders = new HttpHeaders();
+            httpHeaders.setLocation(uri);
+            return new ResponseEntity<>(httpHeaders, HttpStatus.FOUND);
+        } catch (URISyntaxException e) {
+            logger.error("Invalid URL syntax: {}", fullUrl.getOriginalUrl(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
 
     @Autowired
-    public urlController(urlService urlService) {
+    public urlController(urlService urlService, cacheService cacheService) {
         this.urlService = urlService;
+        this.cacheService = cacheService;
     }
 
     @GetMapping("/health")
@@ -36,46 +51,37 @@ public class urlController {
 
     @PostMapping("/shorten")
     public ResponseEntity<ShortUrl> shortenUrl(@RequestBody FullUrl fullUrl) {
-        if (fullUrl == null || fullUrl.getOriginalUrl() == null || fullUrl.getOriginalUrl().isBlank()) {
-            logger.warn("Received invalid shorten request: missing originalUrl");
-            return ResponseEntity.badRequest().build();
-        }
-
-        try {
-            logger.info("Received request to shorten URL: {}", fullUrl.getOriginalUrl());
-            ShortUrl shortUrl = urlService.generateShortUrl(fullUrl);
-            logger.info("Generated short URL: {}", shortUrl.getShortUrl());
-            return ResponseEntity.ok(shortUrl);
-        } catch (IllegalArgumentException ex) {
-            logger.warn("URL validation failed: {}", ex.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        logger.info("Received request to shorten URL: {}", fullUrl.getOriginalUrl());
+        ShortUrl shortUrl = urlService.generateShortUrl(fullUrl);
+        logger.info("Generated short URL: {}", shortUrl.getShortUrl());
+        return ResponseEntity.ok(shortUrl);
     }
 
     @GetMapping("/{shortUrl}")
     public ResponseEntity<Void> redirectToFullUrl(@PathVariable String shortUrl){
+               // Todo: Use a separate service for storing metadata like location, timestamp, click-count update etc. for analytics and monitoring purposes
         logger.debug("Received request to redirect short URL: {}", shortUrl);
-        FullUrl fullUrl = urlService.getFullUrl(shortUrl);
-        // Todo: Use a separate service for storing metadata like location, timestamp, click-count update etc. for analytics and monitoring purposes
+        FullUrl fullUrl=null;
+        // 1) check Redis cache first for better performance
+        urlEntity cached = cacheService.getUrlFromCache(shortUrl);
+        if (cached != null) {
+            logger.info("Cache hit for short URL: {}", shortUrl);
+            fullUrl = new FullUrl(cached.getOriginalUrl());
+            return createRedirectResponse(fullUrl);
+        }
 
-        // Todo: Implement Redis caching for frequently accessed URLs to reduce database load and improve performance
+        urlEntity urlEntity = urlService.getUrlEntity(shortUrl);
 
-        if (fullUrl != null) {
-            logger.debug("Redirecting to original URL: {}", fullUrl.getOriginalUrl());
-            try {
-                HttpHeaders headers = new HttpHeaders();
-                headers.setLocation(new URI(fullUrl.getOriginalUrl()));
-                return new ResponseEntity<>(headers, HttpStatus.FOUND);
-            } catch (URISyntaxException e) {
-                logger.warn("Invalid original URL for short URL {}: {}", shortUrl, fullUrl.getOriginalUrl());
-                return ResponseEntity.badRequest().build();
-            }
+        if (urlEntity != null) {
+            logger.info("Redirecting to original URL: {}", urlEntity.getOriginalUrl());
+            cacheService.putUrlInCache(urlEntity); // cache the result for future requests
+            return createRedirectResponse(new FullUrl(urlEntity.getOriginalUrl()));
         } else {
             logger.warn("No original URL found for short URL: {}", shortUrl);
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
     }
 
 
-    
+
 }
