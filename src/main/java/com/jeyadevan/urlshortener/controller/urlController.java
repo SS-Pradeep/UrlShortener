@@ -1,29 +1,33 @@
 package com.jeyadevan.urlshortener.controller;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-import java.net.URI;
-import java.net.URISyntaxException;
 
+import com.jeyadevan.urlshortener.common.LocationUtil;
 import com.jeyadevan.urlshortener.dto.FullUrl;
 import com.jeyadevan.urlshortener.dto.ShortUrl;
+import com.jeyadevan.urlshortener.model.clickEventEntity;
+import com.jeyadevan.urlshortener.model.urlEntity;
+import com.jeyadevan.urlshortener.services.analyticsService;
+import com.jeyadevan.urlshortener.services.cacheService;
 import com.jeyadevan.urlshortener.services.urlService;
 
 import jakarta.servlet.http.HttpServletRequest;
-
-import com.jeyadevan.urlshortener.services.analyticsService;
-import com.jeyadevan.urlshortener.services.cacheService;
-import com.jeyadevan.urlshortener.common.LocationUtil;
-import com.jeyadevan.urlshortener.model.urlEntity;
-import org.slf4j.LoggerFactory;
-import org.slf4j.Logger;
 
 @RestController
 public class urlController {
@@ -70,7 +74,6 @@ public class urlController {
     @GetMapping("/{shortUrl:[a-zA-Z0-9]+}")
     public ResponseEntity<Void> redirectToFullUrl(@PathVariable String shortUrl, HttpServletRequest request){
         logger.debug("Received request to redirect short URL: {}", shortUrl);
-        FullUrl fullUrl=null;
         // 1) check Redis cache first for better performance
         urlEntity cached = cacheService.getUrlFromCache(shortUrl);
         if (cached != null) {
@@ -78,8 +81,7 @@ public class urlController {
             String location = locationUtil.getLocationFromIP(request);
             String deviceType = request.getHeader("User-Agent");
             analyticsService.logClickEvent(shortUrl, location, deviceType);
-            fullUrl = new FullUrl(cached.getOriginalUrl());
-            return createRedirectResponse(fullUrl);
+            return createRedirectResponse(new FullUrl(cached.getOriginalUrl()));
         }
 
         urlEntity urlEntity = urlService.getUrlEntity(shortUrl);
@@ -97,6 +99,29 @@ public class urlController {
         }
     }
 
+    @GetMapping("/analytics/{shortUrl:[a-zA-Z0-9]+}")
+    public ResponseEntity<?> getAnalytics(@PathVariable String shortUrl) {
+        logger.info("Received request for analytics of short URL: {}", shortUrl);
+        logger.info("Fetching analytics for short URL: {}", shortUrl);
+
+        List<clickEventEntity> events = analyticsService.getClickEventsByUrlId(shortUrl);
+
+        if (events == null || events.isEmpty()) {
+            logger.warn("No analytics found for short URL: {}", shortUrl);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("No analytics found");
+        }
+
+        Map<String, Object> response = new HashMap<>();
+
+        response.put("totalClicks", events.size());
+
+        response.put("locationStats", analyticsService.getLocationCounts(shortUrl));
+        response.put("deviceStats", analyticsService.getDeviceCounts(shortUrl));
+
+        response.put("recentClicks", events);
+
+        return ResponseEntity.ok(response);
+    }
 
 
 }

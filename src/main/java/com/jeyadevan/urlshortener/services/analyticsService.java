@@ -23,16 +23,6 @@ public class analyticsService {
         this.clickEventRepository = clickEventRepository;
     }
 
-    public List<LocationCount> getLocationCounts() {
-        logger.info("Fetching location counts");
-        return clickEventRepository.countClicksByLocation();
-    }
-
-    public List<DeviceCount> getDeviceCounts() {
-        logger.info("Fetching device counts");
-        return clickEventRepository.countClicksByDeviceType();
-    }
-
     public List<clickEventEntity> getClickEventsByUrlId(String urlId) {
         logger.info("Fetching click events for URL ID: {}", urlId);
         return clickEventRepository.findByUrlId(urlId);
@@ -42,6 +32,16 @@ public class analyticsService {
         logger.info("Logging click event for URL ID: {}, Location: {}, Device Type: {}", urlId, location, deviceType);
         clickEventEntity clickEvent = new clickEventEntity(urlId, location, deviceType);
         clickEventRepository.save(clickEvent);
+    }
+
+    public List<LocationCount> getLocationCounts(String urlId) {
+        logger.info("Fetching location counts for URL ID: {}", urlId);
+        return clickEventRepository.countClicksByLocation(urlId);
+    }
+
+    public List<DeviceCount> getDeviceCounts(String urlId) {
+        logger.info("Fetching device counts for URL ID: {}", urlId);
+        return clickEventRepository.countClicksByDeviceType(urlId);
     }
 
 }
